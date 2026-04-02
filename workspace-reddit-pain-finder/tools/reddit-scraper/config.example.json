@@ -1,0 +1,17 @@
+{
+  "username": "your-reddit-email@example.com",
+  "password": "your-reddit-password",
+  "headless": true,
+  "forceLogin": false,
+  "manualLoginTimeoutSec": 180,
+  "requestDelayMs": 1200,
+  "lookbackHours": 168,
+  "maxFeedPages": 15,
+  "maxCommentsPerPost": 200,
+  "fetchComments": true,
+  "outputDir": "../../data/analysis",
+  "storageStatePath": "./storage-state.json",
+  "locale": "en-US",
+  "timeoutMs": 90000,
+  "verbose": true
+}

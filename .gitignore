@@ -1,0 +1,10 @@
+.DS_Store
+*.pyc
+__pycache__/
+node_modules/
+data/
+memory/
+.openclaw/
+auth-profiles.json
+tools/reddit-scraper/config.json
+tools/reddit-scraper/storage-state.json

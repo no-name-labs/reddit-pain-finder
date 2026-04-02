@@ -1,0 +1,14 @@
+{
+  "name": "reddit-pain-finder-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reddit scraper tools for pain-finder agent — subreddit discovery and post collection",
+  "scripts": {
+    "search": "node search.js",
+    "scrape": "node scrape.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "playwright": "^1.58.2"
+  }
+}
