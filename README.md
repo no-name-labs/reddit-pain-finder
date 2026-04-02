@@ -18,11 +18,12 @@ Built for entrepreneurs and product teams who want to find prospects by locating
 
 ## Requirements
 
-- Existing OpenClaw installation (`openclaw` CLI available)
+- Existing OpenClaw installation with a running gateway
 - Node.js 22+
-- Telegram bot token
-- Telegram group with Topics enabled
+- Telegram group with Topics enabled (agent binds to the existing OpenClaw bot)
 - Reddit account credentials (for scraping)
+
+No separate Telegram bot token needed — the agent uses the same bot that OpenClaw is already running.
 
 ## Install
 
@@ -39,7 +40,6 @@ Non-interactive install:
 ```bash
 ./scripts/install.sh \
   --non-interactive \
-  --telegram-bot-token "<TOKEN>" \
   --telegram-group-id "<GROUP_ID>" \
   --telegram-topic-id "<TOPIC_ID>" \
   --reddit-username "<REDDIT_USER>" \

@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 OPENCLAW_HOME="${OPENCLAW_HOME:-}"
-TELEGRAM_BOT_TOKEN=""
 TELEGRAM_GROUP_ID=""
 TELEGRAM_TOPIC_ID=""
 REDDIT_USERNAME=""
@@ -16,19 +15,20 @@ usage() {
 Usage: scripts/install.sh [options]
 
 Options:
-  --telegram-bot-token <token>
-  --telegram-group-id <group-id>
-  --telegram-topic-id <topic-id>
-  --reddit-username <email>
-  --reddit-password <password>
-  --openclaw-home <path>
-  --non-interactive
+  --telegram-group-id <group-id>     Telegram group id (e.g. -1003633569118)
+  --telegram-topic-id <topic-id>     Telegram topic id (e.g. 1655)
+  --reddit-username <email>          Reddit account email
+  --reddit-password <password>       Reddit account password
+  --openclaw-home <path>             Path to .openclaw directory
+  --non-interactive                  Skip interactive prompts
+
+The agent uses the existing OpenClaw Telegram bot (account "default").
+No separate bot token is needed.
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --telegram-bot-token) TELEGRAM_BOT_TOKEN="$2"; shift 2 ;;
     --telegram-group-id) TELEGRAM_GROUP_ID="$2"; shift 2 ;;
     --telegram-topic-id) TELEGRAM_TOPIC_ID="$2"; shift 2 ;;
     --reddit-username) REDDIT_USERNAME="$2"; shift 2 ;;
@@ -91,14 +91,13 @@ echo "    OpenClaw home: ${OPENCLAW_HOME}"
 echo ""
 
 # --- Collect inputs ---
-prompt_if_empty TELEGRAM_BOT_TOKEN "Telegram bot token"
 prompt_if_empty TELEGRAM_GROUP_ID "Telegram group id"
 prompt_if_empty TELEGRAM_TOPIC_ID "Telegram topic id"
 prompt_if_empty REDDIT_USERNAME "Reddit username (email)"
 prompt_secret REDDIT_PASSWORD "Reddit password"
 
-if [[ -z "${TELEGRAM_BOT_TOKEN}" || -z "${TELEGRAM_GROUP_ID}" || -z "${TELEGRAM_TOPIC_ID}" ]]; then
-  echo "Missing required Telegram inputs." >&2
+if [[ -z "${TELEGRAM_GROUP_ID}" || -z "${TELEGRAM_TOPIC_ID}" ]]; then
+  echo "Missing required Telegram group/topic id." >&2
   exit 1
 fi
 if [[ -z "${REDDIT_USERNAME}" || -z "${REDDIT_PASSWORD}" ]]; then
@@ -173,7 +172,6 @@ WORKSPACE_PATH="${WORKSPACE_DIR}" \
 AGENT_DIR_PATH="${AGENT_DIR}" \
 GROUP_ID_ENV="${TELEGRAM_GROUP_ID}" \
 TOPIC_ID_ENV="${TELEGRAM_TOPIC_ID}" \
-BOT_TOKEN_ENV="${TELEGRAM_BOT_TOKEN}" \
 python3 - <<'PY'
 import json
 import os
@@ -184,21 +182,8 @@ workspace = os.environ["WORKSPACE_PATH"]
 agent_dir = os.environ["AGENT_DIR_PATH"]
 group_id = os.environ["GROUP_ID_ENV"]
 topic_id = os.environ["TOPIC_ID_ENV"]
-bot_token = os.environ["BOT_TOKEN_ENV"]
 
 data = json.loads(config_path.read_text(encoding="utf-8"))
-
-# Telegram account
-channels = data.setdefault("channels", {})
-telegram = channels.setdefault("telegram", {})
-telegram["enabled"] = True
-accounts = telegram.setdefault("accounts", {})
-accounts["reddit-pain-finder"] = {"botToken": bot_token}
-groups = telegram.setdefault("groups", {})
-group_key = str(group_id)
-group_entry = groups.setdefault(group_key, {})
-group_entry["groupPolicy"] = "open"
-group_entry.setdefault("requireMention", False)
 
 # Agent entry
 agents = data.setdefault("agents", {})
@@ -218,17 +203,18 @@ for idx, item in enumerate(agent_list):
 else:
     agent_list.append(agent_entry)
 
-# Binding
+# Binding — uses existing "default" Telegram account
+# Group id format: "<group_id>:topic:<topic_id>"
+peer_id = f"{group_id}:topic:{topic_id}"
 bindings = data.setdefault("bindings", [])
 binding_entry = {
     "agentId": "reddit-pain-finder",
     "match": {
         "channel": "telegram",
-        "accountId": "reddit-pain-finder",
+        "accountId": "default",
         "peer": {
             "kind": "group",
-            "id": group_key,
-            "topicId": int(topic_id),
+            "id": peer_id,
         },
     },
 }
