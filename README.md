@@ -21,9 +21,9 @@ Built for entrepreneurs and product teams who want to find prospects by locating
 - Existing OpenClaw installation with a running gateway
 - Node.js 22+
 - Telegram group with Topics enabled (agent binds to the existing OpenClaw bot)
-- Reddit account credentials (for scraping)
 
 No separate Telegram bot token needed — the agent uses the same bot that OpenClaw is already running.
+No Reddit account needed — the agent uses Reddit's public JSON API.
 
 ## Install
 
@@ -41,9 +41,7 @@ Non-interactive install:
 ./scripts/install.sh \
   --non-interactive \
   --telegram-group-id "<GROUP_ID>" \
-  --telegram-topic-id "<TOPIC_ID>" \
-  --reddit-username "<REDDIT_USER>" \
-  --reddit-password "<REDDIT_PASS>"
+  --telegram-topic-id "<TOPIC_ID>"
 ```
 
 ## Usage
@@ -97,15 +95,12 @@ workspace-reddit-pain-finder/
 
 ## Configuration
 
-### Reddit Credentials
+### Scraper Settings
 
-After install, edit `~/.openclaw/workspace/workspace-reddit-pain-finder/tools/reddit-scraper/config.json`:
+After install, you can tune `~/.openclaw/workspace/workspace-reddit-pain-finder/tools/reddit-scraper/config.json`:
 
 ```json
 {
-  "username": "your-reddit-email",
-  "password": "your-reddit-password",
-  "headless": true,
   "requestDelayMs": 1200,
   "lookbackHours": 168,
   "maxFeedPages": 15,
@@ -113,6 +108,8 @@ After install, edit `~/.openclaw/workspace/workspace-reddit-pain-finder/tools/re
   "fetchComments": true
 }
 ```
+
+No Reddit credentials needed — the agent uses Reddit's public JSON API with standard HTTP requests.
 
 ### Telegram
 
@@ -147,6 +144,7 @@ Then restart OpenClaw.
 - **Stale results after `/reset`:** Gateway may deliver in-flight tool results after a session reset. This is a platform-level issue, not fixable at agent level.
 - **Sparse topics:** Some topics (e.g., "CI flaky tests", "invoice collection") have few dedicated Reddit communities. The agent will report honestly instead of padding with irrelevant mega-communities.
 - **Rate limiting:** Reddit rate-limits aggressive scraping. The agent uses jittered delays and bounded retries, but large analyses may hit 429 errors.
+- **No authentication:** The agent uses Reddit's public JSON API without login. This means no access to NSFW or private subreddits.
 
 ## License
 

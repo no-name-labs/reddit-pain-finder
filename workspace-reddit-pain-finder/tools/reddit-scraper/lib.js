@@ -3,7 +3,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { chromium } = require('playwright');
+const https = require('https');
 const cheerio = require('cheerio');
 
 // ---------------------------------------------------------------------------
@@ -94,19 +94,6 @@ function absoluteRedditUrl(value) {
   return value;
 }
 
-function isLoginUrl(url) {
-  return /\/login(\/|$)|\/account\/login/i.test(url || '');
-}
-
-async function readLoginErrorText(page) {
-  const alertLocator = page.locator(
-    'faceplate-alert, [cause="user-interaction-failed"], [role="alert"]',
-  );
-  const count = await alertLocator.count().catch(() => 0);
-  if (count <= 0) return '';
-  return cleanInlineText(await alertLocator.first().textContent().catch(() => ''));
-}
-
 function nowIsoFilename() {
   return new Date().toISOString().replace(/:/g, '-');
 }
@@ -119,13 +106,6 @@ function createLogger(enabled) {
   return (...args) => {
     if (enabled) console.error('[reddit-scraper]', ...args);
   };
-}
-
-function normalizeCredential(value) {
-  const normalized = cleanInlineText(value || '');
-  if (!normalized) return '';
-  if (/^your_reddit_(username|password)$/i.test(normalized)) return '';
-  return normalized;
 }
 
 function extractBlockText($, root) {
@@ -150,207 +130,101 @@ function loadConfig(configPath) {
   const projectDir = path.dirname(configPath);
 
   return {
-    defaultSubredditUrl: '',
-    headless: true,
-    forceLogin: false,
-    manualLoginTimeoutSec: 180,
     requestDelayMs: 800,
     lookbackHours: 24,
     maxFeedPages: 8,
     maxCommentsPerPost: 200,
     fetchComments: true,
     outputDir: path.resolve(projectDir, rawConfig.outputDir || './output'),
-    storageStatePath: path.resolve(projectDir, rawConfig.storageStatePath || './storage-state.json'),
     locale: 'en-US',
     timeoutMs: 45000,
     verbose: false,
     userAgent: DEFAULT_USER_AGENT,
     ...rawConfig,
-    headless: rawConfig.headless !== undefined ? rawConfig.headless : true,
-    username: normalizeCredential(rawConfig.username),
-    password: normalizeCredential(rawConfig.password),
     outputDir: path.resolve(projectDir, rawConfig.outputDir || './output'),
-    storageStatePath: path.resolve(projectDir, rawConfig.storageStatePath || './storage-state.json'),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Cookie banner & login
+// (Login removed — Reddit JSON API works without authentication)
 // ---------------------------------------------------------------------------
 
-async function dismissCookieBanner(page) {
-  const selectors = [
-    'button:has-text("Accept all")',
-    'button:has-text("Accept All")',
-    'button:has-text("Reject Optional Cookies")',
-    'button:has-text("Reject non-essential")',
-    'button:has-text("Reject Non-essential")',
-    '[data-testid="accept-all-cookies-button"]',
-    '[data-testid="reject-nonessential-cookies-button"]',
-  ];
-  for (const selector of selectors) {
-    const button = page.locator(selector).first();
-    if ((await button.count()) > 0) {
-      await button.click({ timeout: 3000 }).catch(() => {});
-      await page.waitForTimeout(500);
-      return;
-    }
-  }
-}
+// ---------------------------------------------------------------------------
+// HTTP layer (native https — no Playwright needed)
+// ---------------------------------------------------------------------------
 
-async function ensureLoggedIn(context, config, log) {
-  const hasSavedState = fs.existsSync(config.storageStatePath);
-  if (hasSavedState && !config.forceLogin) {
-    log('Using existing storage state:', config.storageStatePath);
-    return;
-  }
-
-  if (!config.username || !config.password) {
-    throw new Error(
-      'Config must include "username" and "password" when storage-state.json is missing or forceLogin=true.',
-    );
-  }
-
-  log('Performing login (headless:', config.headless, ')');
-  const page = await context.newPage();
-
-  await page.goto('https://www.reddit.com/login/', {
-    waitUntil: 'domcontentloaded',
-    timeout: config.timeoutMs,
+function httpGet(url, headers, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const req = https.request({
+      hostname: parsed.hostname,
+      path: parsed.pathname + parsed.search,
+      method: 'GET',
+      headers,
+      timeout: timeoutMs,
+    }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => (body += chunk));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error(`Timeout after ${timeoutMs}ms for ${url}`)); });
+    req.end();
   });
-
-  await page.waitForTimeout(1500);
-  await dismissCookieBanner(page);
-
-  const usernameInput = page.locator('input[name="username"]').first();
-  const passwordInput = page.locator('input[name="password"]').first();
-
-  await usernameInput.waitFor({ state: 'visible', timeout: config.timeoutMs });
-  await usernameInput.fill(config.username);
-  await page.waitForTimeout(300);
-  await passwordInput.fill(config.password);
-  await page.waitForTimeout(400);
-
-  const submitButton = page
-    .locator('button.login, button:has-text("Log In"), button[type="submit"]')
-    .first();
-  await submitButton.waitFor({ state: 'visible', timeout: config.timeoutMs });
-  await submitButton.click({ timeout: 10000 });
-  log('Submitted login form; current URL:', page.url());
-
-  if (!config.headless) {
-    const settleMs = Math.min(config.manualLoginTimeoutSec * 1000, 15000);
-    await page.waitForTimeout(settleMs);
-    const loginError = await readLoginErrorText(page);
-    if (loginError) throw new Error(`Reddit login failed: ${loginError}`);
-    await context.storageState({ path: config.storageStatePath });
-    log('Saved storage state after headed login settle');
-    await page.close().catch(() => {});
-    return;
-  }
-
-  const deadline = Date.now() + config.manualLoginTimeoutSec * 1000;
-  while (Date.now() < deadline) {
-    const currentUrl = page.url();
-    const onLoginRoute = isLoginUrl(currentUrl);
-    const hasUsername = (await page.locator('input[name="username"]').count().catch(() => 0)) > 0;
-    const hasPassword = (await page.locator('input[name="password"]').count().catch(() => 0)) > 0;
-
-    if (!onLoginRoute && !hasUsername && !hasPassword) {
-      await context.storageState({ path: config.storageStatePath });
-      log('Saved storage state to', config.storageStatePath);
-      await page.close();
-      return;
-    }
-
-    const loginError = await readLoginErrorText(page);
-    if (loginError) throw new Error(`Reddit login failed: ${loginError}`);
-
-    const otherPages = context.pages().filter((c) => c !== page);
-    for (const candidate of otherPages) {
-      const candidateUrl = candidate.url();
-      if (!candidateUrl || candidateUrl === 'about:blank' || isLoginUrl(candidateUrl)) continue;
-      await context.storageState({ path: config.storageStatePath });
-      log('Saved storage state from redirected page', candidateUrl);
-      await page.close().catch(() => {});
-      return;
-    }
-
-    await page.waitForTimeout(1500);
-  }
-
-  throw new Error(
-    `Login was not confirmed within ${config.manualLoginTimeoutSec}s.`,
-  );
 }
-
-// ---------------------------------------------------------------------------
-// HTTP layer
-// ---------------------------------------------------------------------------
 
 async function fetchText(context, url, config, log, referer) {
   log('GET', url);
-  const response = await context.request.get(url, {
-    failOnStatusCode: false,
-    timeout: config.timeoutMs,
-    headers: {
-      'user-agent': config.userAgent,
-      accept:
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'accept-language': `${config.locale},en;q=0.9`,
-      'cache-control': 'no-cache',
-      pragma: 'no-cache',
-      ...(referer ? { referer } : {}),
-    },
-  });
+  const headers = {
+    'user-agent': config.userAgent,
+    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'accept-language': `${config.locale},en;q=0.9`,
+    'cache-control': 'no-cache',
+    pragma: 'no-cache',
+    ...(referer ? { referer } : {}),
+  };
 
-  const text = await response.text();
-  log('Status', response.status(), 'bytes', text.length);
+  const res = await httpGet(url, headers, config.timeoutMs);
+  log('Status', res.status, 'bytes', res.body.length);
 
-  if (!response.ok()) {
-    throw new Error(`Request failed with status ${response.status()} for ${url}`);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`Request failed with status ${res.status} for ${url}`);
   }
 
-  return text;
+  return res.body;
 }
 
 async function fetchJson(context, url, config, log, referer) {
   log('GET (json)', url);
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    const response = await context.request.get(url, {
-      failOnStatusCode: false,
-      timeout: config.timeoutMs,
-      headers: {
-        'user-agent': config.userAgent,
-        accept: 'application/json, text/plain, */*',
-        'accept-language': `${config.locale},en;q=0.9`,
-        'cache-control': 'no-cache',
-        pragma: 'no-cache',
-        ...(referer ? { referer } : {}),
-      },
-    });
+    const headers = {
+      'user-agent': config.userAgent,
+      accept: 'application/json, text/plain, */*',
+      'accept-language': `${config.locale},en;q=0.9`,
+      'cache-control': 'no-cache',
+      pragma: 'no-cache',
+      ...(referer ? { referer } : {}),
+    };
 
-    const status = response.status();
-    log('Status', status, 'attempt', attempt + 1);
+    const res = await httpGet(url, headers, config.timeoutMs);
+    log('Status', res.status, 'attempt', attempt + 1);
 
-    if (status === 429) {
-      // Rate limited — back off and retry
-      const retryAfter = parseInt(response.headers()['retry-after'] || '15', 10);
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers['retry-after'] || '15', 10);
       const backoffMs = Math.max(retryAfter * 1000, 5000) + jitteredDelay(2000);
       log('Rate limited (429), backing off', Math.round(backoffMs / 1000), 'seconds');
       await sleep(backoffMs);
       continue;
     }
 
-    const text = await response.text();
-    log('Bytes', text.length);
+    log('Bytes', res.body.length);
 
-    if (!response.ok()) {
-      throw new Error(`Request failed with status ${status} for ${url}`);
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`Request failed with status ${res.status} for ${url}`);
     }
 
-    return JSON.parse(text);
+    return JSON.parse(res.body);
   }
 
   throw new Error(`Rate limited after 3 retries for ${url}`);
@@ -567,12 +441,8 @@ async function collectRecentPostsAuto(context, target, config, log) {
   // Try JSON API first, fall back to HTML if rate-limited
   try {
     const testUrl = `https://www.reddit.com/r/${target.subreddit}/new.json?limit=1&raw_json=1`;
-    const testResp = await context.request.get(testUrl, {
-      failOnStatusCode: false,
-      timeout: 15000,
-      headers: { 'user-agent': config.userAgent },
-    });
-    if (testResp.status() === 429) {
+    const res = await httpGet(testUrl, { 'user-agent': config.userAgent }, 15000);
+    if (res.status === 429) {
       log('JSON API rate-limited (429), falling back to HTML endpoints');
       return collectRecentPosts(context, target, config, log);
     }
@@ -591,15 +461,10 @@ async function collectCommentsAuto(context, posts, config, log) {
 
   try {
     const testUrl = `https://www.reddit.com/r/${firstPost.subreddit}/comments/${firstPost.shortId}.json?limit=1&raw_json=1`;
-    const testResp = await context.request.get(testUrl, {
-      failOnStatusCode: false,
-      timeout: 15000,
-      headers: { 'user-agent': config.userAgent },
-    });
-    if (testResp.status() === 429) {
+    const res = await httpGet(testUrl, { 'user-agent': config.userAgent }, 15000);
+    if (res.status === 429) {
       log('JSON API rate-limited for comments, falling back to HTML');
       const count = await collectComments(context, posts, config, log);
-      // Calculate actual totals for HTML fallback
       let totalActual = 0;
       for (const p of posts) totalActual += p.commentsTotal || p.commentCount || 0;
       return { totalCollected: count, totalActual };
@@ -779,41 +644,18 @@ async function collectComments(context, posts, config, log) {
 }
 
 // ---------------------------------------------------------------------------
-// Session management
+// Session management (lightweight — no browser needed)
 // ---------------------------------------------------------------------------
 
 async function createSession(configPath) {
   const config = loadConfig(configPath);
   const log = createLogger(config.verbose);
-
-  const needsFreshLogin = config.forceLogin || !fs.existsSync(config.storageStatePath);
-  if (needsFreshLogin && (!config.username || !config.password)) {
-    throw new Error(
-      'Missing Reddit credentials. Fill username/password in config or provide a valid storage-state.json.',
-    );
-  }
-
-  const browser = await chromium.launch({ headless: config.headless });
-  const contextOptions = {
-    locale: config.locale,
-    userAgent: config.userAgent,
-    viewport: { width: 1440, height: 900 },
-  };
-
-  if (fs.existsSync(config.storageStatePath) && !config.forceLogin) {
-    contextOptions.storageState = config.storageStatePath;
-  }
-
-  const context = await browser.newContext(contextOptions);
-  await ensureLoggedIn(context, config, log);
-
-  return { context, browser, config, log };
+  // No browser, no login — Reddit JSON API is public
+  return { context: null, config, log };
 }
 
 async function closeSession(session) {
-  if (!session) return;
-  await session.context.close().catch(() => {});
-  await session.browser.close().catch(() => {});
+  // Nothing to close — no browser
 }
 
 // ---------------------------------------------------------------------------

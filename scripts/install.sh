@@ -6,8 +6,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OPENCLAW_HOME="${OPENCLAW_HOME:-}"
 TELEGRAM_GROUP_ID=""
 TELEGRAM_TOPIC_ID=""
-REDDIT_USERNAME=""
-REDDIT_PASSWORD=""
 NON_INTERACTIVE="0"
 
 usage() {
@@ -17,13 +15,11 @@ Usage: scripts/install.sh [options]
 Options:
   --telegram-group-id <group-id>     Telegram group id (e.g. -1003633569118)
   --telegram-topic-id <topic-id>     Telegram topic id (e.g. 1655)
-  --reddit-username <email>          Reddit account email
-  --reddit-password <password>       Reddit account password
   --openclaw-home <path>             Path to .openclaw directory
   --non-interactive                  Skip interactive prompts
 
 The agent uses the existing OpenClaw Telegram bot (account "default").
-No separate bot token is needed.
+No separate bot token or Reddit credentials needed — Reddit JSON API is public.
 USAGE
 }
 
@@ -31,8 +27,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --telegram-group-id) TELEGRAM_GROUP_ID="$2"; shift 2 ;;
     --telegram-topic-id) TELEGRAM_TOPIC_ID="$2"; shift 2 ;;
-    --reddit-username) REDDIT_USERNAME="$2"; shift 2 ;;
-    --reddit-password) REDDIT_PASSWORD="$2"; shift 2 ;;
     --openclaw-home) OPENCLAW_HOME="$2"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE="1"; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -61,18 +55,6 @@ prompt_if_empty() {
   fi
 }
 
-prompt_secret() {
-  local var_name="$1"
-  local label="$2"
-  if [[ "${NON_INTERACTIVE}" == "1" ]]; then
-    return
-  fi
-  if [[ -z "${!var_name:-}" ]]; then
-    read -r -s -p "${label}: " "${var_name}"
-    echo
-  fi
-}
-
 # --- Resolve OPENCLAW_HOME ---
 if [[ -z "${OPENCLAW_HOME}" && -f "${HOME}/.openclaw/openclaw.json" ]]; then
   OPENCLAW_HOME="${HOME}/.openclaw"
@@ -93,15 +75,9 @@ echo ""
 # --- Collect inputs ---
 prompt_if_empty TELEGRAM_GROUP_ID "Telegram group id"
 prompt_if_empty TELEGRAM_TOPIC_ID "Telegram topic id"
-prompt_if_empty REDDIT_USERNAME "Reddit username (email)"
-prompt_secret REDDIT_PASSWORD "Reddit password"
 
 if [[ -z "${TELEGRAM_GROUP_ID}" || -z "${TELEGRAM_TOPIC_ID}" ]]; then
   echo "Missing required Telegram group/topic id." >&2
-  exit 1
-fi
-if [[ -z "${REDDIT_USERNAME}" || -z "${REDDIT_PASSWORD}" ]]; then
-  echo "Missing Reddit credentials." >&2
   exit 1
 fi
 
@@ -115,35 +91,28 @@ mkdir -p "${WORKSPACE_DIR}" "${AGENT_DIR}/sessions"
 cp -R "${ROOT_DIR}/workspace-reddit-pain-finder/"* "${WORKSPACE_DIR}/"
 
 # --- Install Node dependencies ---
-echo "==> Installing Node.js dependencies..."
+echo "==> Installing Node.js dependencies (cheerio only, no browser needed)..."
 cd "${WORKSPACE_DIR}/tools/reddit-scraper"
 if [[ -f "package.json" ]]; then
   npm install --silent 2>/dev/null
-  npx playwright install chromium --with-deps 2>/dev/null || npx playwright install chromium 2>/dev/null || true
 fi
 cd "${ROOT_DIR}"
 
-# --- Write Reddit config ---
-echo "==> Writing Reddit credentials..."
-cat > "${WORKSPACE_DIR}/tools/reddit-scraper/config.json" <<REDDIT_EOF
+# --- Write minimal config ---
+echo "==> Writing scraper config..."
+cat > "${WORKSPACE_DIR}/tools/reddit-scraper/config.json" <<CONFIG_EOF
 {
-  "username": "${REDDIT_USERNAME}",
-  "password": "${REDDIT_PASSWORD}",
-  "headless": true,
-  "forceLogin": false,
-  "manualLoginTimeoutSec": 180,
   "requestDelayMs": 1200,
   "lookbackHours": 168,
   "maxFeedPages": 15,
   "maxCommentsPerPost": 200,
   "fetchComments": true,
   "outputDir": "../../data/analysis",
-  "storageStatePath": "./storage-state.json",
   "locale": "en-US",
   "timeoutMs": 90000,
   "verbose": true
 }
-REDDIT_EOF
+CONFIG_EOF
 
 # --- Initialize data directory ---
 mkdir -p "${WORKSPACE_DIR}/data/analysis"
@@ -204,7 +173,6 @@ else:
     agent_list.append(agent_entry)
 
 # Binding — uses existing "default" Telegram account
-# Group id format: "<group_id>:topic:<topic_id>"
 peer_id = f"{group_id}:topic:{topic_id}"
 bindings = data.setdefault("bindings", [])
 binding_entry = {
