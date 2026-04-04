@@ -70,22 +70,20 @@ Reddit blocks requests from most datacenter IP ranges — you'll get `403 Blocke
   --proxy "http://user:pass@gate.smartproxy.com:10000"
 ```
 
-3. **Merge proxy into the gateway's `.env`** so it persists across restarts:
+3. **If you already installed without `--proxy`**, add proxy vars to `~/.openclaw/.env` manually:
 
 ```bash
-# The installer writes to ~/.openclaw/reddit-pain-finder.env
-# but the gateway typically sources ~/.openclaw/.env on startup.
-# Merge the proxy vars into the main .env:
-cat ~/.openclaw/reddit-pain-finder.env >> ~/.openclaw/.env
+# Check if proxy vars already exist, then add or replace:
+grep -q "^HTTPS_PROXY=" ~/.openclaw/.env 2>/dev/null && \
+  sed -i "s|^HTTPS_PROXY=.*|HTTPS_PROXY=http://user:pass@gate.smartproxy.com:10000|" ~/.openclaw/.env || \
+  echo "HTTPS_PROXY=http://user:pass@gate.smartproxy.com:10000" >> ~/.openclaw/.env
+
+grep -q "^HTTP_PROXY=" ~/.openclaw/.env 2>/dev/null && \
+  sed -i "s|^HTTP_PROXY=.*|HTTP_PROXY=http://user:pass@gate.smartproxy.com:10000|" ~/.openclaw/.env || \
+  echo "HTTP_PROXY=http://user:pass@gate.smartproxy.com:10000" >> ~/.openclaw/.env
 ```
 
-Or add the lines manually:
-
-```bash
-# Append to ~/.openclaw/.env
-HTTPS_PROXY=http://user:pass@gate.smartproxy.com:10000
-HTTP_PROXY=http://user:pass@gate.smartproxy.com:10000
-```
+The `--proxy` flag in install.sh does this automatically (with duplicate protection).
 
 4. **Restart the gateway** so it picks up the new env vars:
 
