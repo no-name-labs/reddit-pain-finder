@@ -44,6 +44,20 @@ Non-interactive install:
   --telegram-topic-id "<TOPIC_ID>"
 ```
 
+### Proxy (required for cloud servers)
+
+Reddit blocks requests from most cloud IP ranges (AWS, GCP, Azure). If you're running on a cloud server, you need an HTTPS proxy with a residential IP.
+
+Set the proxy before starting the gateway:
+
+```bash
+export HTTPS_PROXY="http://user:pass@proxy-host:port"
+```
+
+Or add it to your OpenClaw environment so it persists across restarts.
+
+Recommended providers: [Webshare](https://www.webshare.io) (~$5/mo), [SmartProxy](https://www.smartproxy.com) (~$7/mo for 1GB residential).
+
 ## Usage
 
 After install, interact with the bot in your Telegram topic:

@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OPENCLAW_HOME="${OPENCLAW_HOME:-}"
 TELEGRAM_GROUP_ID=""
 TELEGRAM_TOPIC_ID=""
+PROXY_URL=""
 NON_INTERACTIVE="0"
 
 usage() {
@@ -15,11 +16,14 @@ Usage: scripts/install.sh [options]
 Options:
   --telegram-group-id <group-id>     Telegram group id (e.g. -1003633569118)
   --telegram-topic-id <topic-id>     Telegram topic id (e.g. 1655)
+  --proxy <url>                      HTTPS proxy for Reddit (required on cloud servers)
+                                     Format: http://user:pass@host:port
   --openclaw-home <path>             Path to .openclaw directory
   --non-interactive                  Skip interactive prompts
 
 The agent uses the existing OpenClaw Telegram bot (account "default").
 No separate bot token or Reddit credentials needed — Reddit JSON API is public.
+On cloud servers (AWS/GCP/Azure), Reddit blocks requests by IP — use --proxy.
 USAGE
 }
 
@@ -27,7 +31,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --telegram-group-id) TELEGRAM_GROUP_ID="$2"; shift 2 ;;
     --telegram-topic-id) TELEGRAM_TOPIC_ID="$2"; shift 2 ;;
-    --openclaw-home) OPENCLAW_HOME="$2"; shift 2 ;;
+    --proxy) PROXY_URL="$2"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE="1"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -196,6 +200,34 @@ else:
 config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
+# --- Configure proxy if provided ---
+if [[ -n "${PROXY_URL}" ]]; then
+  echo "==> Configuring proxy: ${PROXY_URL}"
+  ENV_FILE="${OPENCLAW_HOME}/reddit-pain-finder.env"
+  echo "HTTPS_PROXY=${PROXY_URL}" > "${ENV_FILE}"
+  echo "HTTP_PROXY=${PROXY_URL}" >> "${ENV_FILE}"
+
+  # Try to add to systemd drop-in if gateway runs under systemd
+  UNIT_DIR="${HOME}/.config/systemd/user"
+  if [[ -d "${UNIT_DIR}" ]]; then
+    shopt -s nullglob
+    for unit in "${UNIT_DIR}"/openclaw-gateway*.service; do
+      DROPIN_DIR="${UNIT_DIR}/$(basename "${unit}").d"
+      mkdir -p "${DROPIN_DIR}"
+      cat > "${DROPIN_DIR}/reddit-proxy.conf" <<SYSD_EOF
+[Service]
+EnvironmentFile=${ENV_FILE}
+SYSD_EOF
+    done
+    shopt -u nullglob
+    systemctl --user daemon-reload 2>/dev/null || true
+  fi
+
+  echo "    Proxy env saved to ${ENV_FILE}"
+  echo "    If gateway is not under systemd, add to your startup:"
+  echo "      export HTTPS_PROXY=\"${PROXY_URL}\""
+fi
+
 # --- Restart gateway ---
 echo "==> Restarting OpenClaw gateway..."
 if command -v openclaw >/dev/null 2>&1; then
@@ -207,4 +239,7 @@ fi
 echo ""
 echo "==> Reddit Pain Finder installed successfully!"
 echo "    Workspace: ${WORKSPACE_DIR}"
+if [[ -n "${PROXY_URL}" ]]; then
+  echo "    Proxy: ${PROXY_URL}"
+fi
 echo "    Send /reset in your Telegram topic to start."

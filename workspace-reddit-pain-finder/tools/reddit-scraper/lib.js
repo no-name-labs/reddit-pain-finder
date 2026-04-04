@@ -3,6 +3,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const http = require('http');
 const https = require('https');
 const cheerio = require('cheerio');
 
@@ -153,7 +154,26 @@ function loadConfig(configPath) {
 // HTTP layer (native https — no Playwright needed)
 // ---------------------------------------------------------------------------
 
+// Proxy support: set HTTPS_PROXY or HTTP_PROXY env var.
+// Format: http://user:pass@host:port
+function getProxyConfig() {
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
+  if (!proxyUrl) return null;
+  const parsed = new URL(proxyUrl);
+  return {
+    host: parsed.hostname,
+    port: parseInt(parsed.port, 10) || 8080,
+    auth: parsed.username ? `${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password || '')}` : null,
+  };
+}
+
 function httpGet(url, headers, timeoutMs) {
+  const proxy = getProxyConfig();
+  if (proxy) return httpGetViaProxy(url, headers, timeoutMs, proxy);
+  return httpGetDirect(url, headers, timeoutMs);
+}
+
+function httpGetDirect(url, headers, timeoutMs) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const req = https.request({
@@ -170,6 +190,51 @@ function httpGet(url, headers, timeoutMs) {
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error(`Timeout after ${timeoutMs}ms for ${url}`)); });
     req.end();
+  });
+}
+
+function httpGetViaProxy(url, headers, timeoutMs, proxy) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const connectHeaders = { Host: `${target.hostname}:443` };
+    if (proxy.auth) connectHeaders['Proxy-Authorization'] = 'Basic ' + Buffer.from(proxy.auth).toString('base64');
+
+    const connectReq = http.request({
+      host: proxy.host,
+      port: proxy.port,
+      method: 'CONNECT',
+      path: `${target.hostname}:443`,
+      headers: connectHeaders,
+      timeout: timeoutMs,
+    });
+
+    connectReq.on('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        return reject(new Error(`Proxy CONNECT failed with status ${res.statusCode}`));
+      }
+
+      const tlsReq = https.request({
+        hostname: target.hostname,
+        path: target.pathname + target.search,
+        method: 'GET',
+        headers,
+        socket,
+        agent: false,
+        timeout: timeoutMs,
+      }, (tlsRes) => {
+        let body = '';
+        tlsRes.on('data', (chunk) => (body += chunk));
+        tlsRes.on('end', () => resolve({ status: tlsRes.statusCode, headers: tlsRes.headers, body }));
+      });
+      tlsReq.on('error', reject);
+      tlsReq.on('timeout', () => { tlsReq.destroy(); reject(new Error(`Timeout after ${timeoutMs}ms for ${url} (via proxy)`)); });
+      tlsReq.end();
+    });
+
+    connectReq.on('error', reject);
+    connectReq.on('timeout', () => { connectReq.destroy(); reject(new Error(`Proxy connect timeout for ${url}`)); });
+    connectReq.end();
   });
 }
 
