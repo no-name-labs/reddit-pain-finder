@@ -193,7 +193,16 @@ The installer configures Telegram bindings automatically. To change the group or
 
 ### Model
 
-Default model: `anthropic/claude-sonnet-4-6`. Change in `openclaw.json` under the agent entry.
+The agent inherits the default model from `agents.defaults.model.primary` in your `openclaw.json`. No model is hardcoded — it uses whatever you've configured for your OpenClaw instance (Anthropic, OpenRouter, OpenAI, etc.).
+
+To override for this agent only, add a `model` field to the agent entry in `openclaw.json`:
+
+```json
+{
+  "id": "reddit-pain-finder",
+  "model": { "primary": "openrouter/auto" }
+}
+```
 
 ## Upgrade
 

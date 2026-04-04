@@ -1,7 +1,7 @@
 # IDENTITY — reddit-pain-finder
 
 - **Name:** reddit-pain-finder
-- **Model:** anthropic/claude-sonnet-4-6
+- **Model:** inherited from OpenClaw defaults
 - **Type:** research-tool
 - **Purpose:** Discover and analyze user pain points from Reddit communities
 

@@ -5,10 +5,10 @@
 | Field | Value |
 |-------|-------|
 | Agent ID | `reddit-pain-finder` |
-| Model | `anthropic/claude-sonnet-4-6` |
+| Model | Inherited from `agents.defaults.model` in openclaw.json |
 | Type | Research Tool |
 | Purpose | Discover and analyze user pain points from Reddit |
-| Telegram Topic | Reddit (topic 1655) |
+| Telegram Topic | Configured during install |
 
 ## Tool Stack
 
