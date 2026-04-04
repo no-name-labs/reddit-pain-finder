@@ -70,15 +70,39 @@ Reddit blocks requests from most datacenter IP ranges — you'll get `403 Blocke
   --proxy "http://user:pass@gate.smartproxy.com:10000"
 ```
 
-3. Or set the env vars manually if the agent is already installed:
+3. **Merge proxy into the gateway's `.env`** so it persists across restarts:
 
 ```bash
-# Add to ~/.openclaw/reddit-pain-finder.env (or your gateway startup script)
+# The installer writes to ~/.openclaw/reddit-pain-finder.env
+# but the gateway typically sources ~/.openclaw/.env on startup.
+# Merge the proxy vars into the main .env:
+cat ~/.openclaw/reddit-pain-finder.env >> ~/.openclaw/.env
+```
+
+Or add the lines manually:
+
+```bash
+# Append to ~/.openclaw/.env
 HTTPS_PROXY=http://user:pass@gate.smartproxy.com:10000
 HTTP_PROXY=http://user:pass@gate.smartproxy.com:10000
 ```
 
-Then restart the gateway **with these env vars loaded** — child processes (search.js, batch-scrape.js) inherit them from the gateway.
+4. **Restart the gateway** so it picks up the new env vars:
+
+```bash
+# If using nohup (typical EC2 setup):
+pkill -f openclaw-gateway
+source ~/.openclaw/.env
+OPENCLAW_HOME=/home/ubuntu nohup openclaw gateway >> /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log 2>&1 &
+
+# If using systemd:
+systemctl --user restart openclaw-gateway
+
+# If using macOS launchd:
+openclaw gateway restart
+```
+
+Child processes (search.js, batch-scrape.js) inherit env vars from the gateway — so the proxy only needs to be set once on the gateway process.
 
 ### Important notes
 

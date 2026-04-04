@@ -215,6 +215,19 @@ if [[ -n "${PROXY_URL}" ]]; then
   echo "HTTPS_PROXY=${PROXY_URL}" > "${ENV_FILE}"
   echo "HTTP_PROXY=${PROXY_URL}" >> "${ENV_FILE}"
 
+  # Merge into main .env so gateway picks it up on restart
+  MAIN_ENV="${OPENCLAW_HOME}/.env"
+  touch "${MAIN_ENV}"
+  grep -q "^HTTPS_PROXY=" "${MAIN_ENV}" 2>/dev/null && \
+    sed -i.bak "s|^HTTPS_PROXY=.*|HTTPS_PROXY=${PROXY_URL}|" "${MAIN_ENV}" 2>/dev/null || \
+    sed -i '' "s|^HTTPS_PROXY=.*|HTTPS_PROXY=${PROXY_URL}|" "${MAIN_ENV}" 2>/dev/null || \
+    echo "HTTPS_PROXY=${PROXY_URL}" >> "${MAIN_ENV}"
+  grep -q "^HTTP_PROXY=" "${MAIN_ENV}" 2>/dev/null && \
+    sed -i.bak "s|^HTTP_PROXY=.*|HTTP_PROXY=${PROXY_URL}|" "${MAIN_ENV}" 2>/dev/null || \
+    sed -i '' "s|^HTTP_PROXY=.*|HTTP_PROXY=${PROXY_URL}|" "${MAIN_ENV}" 2>/dev/null || \
+    echo "HTTP_PROXY=${PROXY_URL}" >> "${MAIN_ENV}"
+  rm -f "${MAIN_ENV}.bak"
+
   # Try to add to systemd drop-in if gateway runs under systemd
   UNIT_DIR="${HOME}/.config/systemd/user"
   if [[ -d "${UNIT_DIR}" ]]; then
@@ -231,9 +244,8 @@ SYSD_EOF
     systemctl --user daemon-reload 2>/dev/null || true
   fi
 
-  echo "    Proxy env saved to ${ENV_FILE}"
-  echo "    If gateway is not under systemd, add to your startup:"
-  echo "      export HTTPS_PROXY=\"${PROXY_URL}\""
+  echo "    Proxy written to ${MAIN_ENV} and ${ENV_FILE}"
+  echo "    Gateway restart required to pick up new env vars."
 fi
 
 # --- Restart gateway ---
