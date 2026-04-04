@@ -15,19 +15,20 @@ Built for entrepreneurs and product teams who want to find prospects by locating
 - Exact-match niche community preservation
 - Honest coverage reporting (collected vs actual comments)
 - Bounded retry policy (max 1 retry, no infinite loops)
+- Optional HTTPS proxy support for cloud deployments
 
 ## Requirements
 
 - Existing OpenClaw installation with a running gateway
 - Node.js 22+
-- Telegram group with Topics enabled (agent binds to the existing OpenClaw bot)
+- Telegram group with Topics enabled
 
 No separate Telegram bot token needed — the agent uses the same bot that OpenClaw is already running.
 No Reddit account needed — the agent uses Reddit's public JSON API via headless Chromium (Playwright).
 
 ## Install
 
-Run on the machine that hosts OpenClaw:
+Works on both macOS and Linux (Ubuntu 22.04+).
 
 ```bash
 git clone https://github.com/no-name-labs/reddit-pain-finder.git
@@ -44,19 +45,58 @@ Non-interactive install:
   --telegram-topic-id "<TOPIC_ID>"
 ```
 
-### Proxy (required for cloud servers)
+The installer will:
+1. Copy workspace files to `~/.openclaw/workspace/workspace-reddit-pain-finder/`
+2. Install Node.js dependencies (cheerio + playwright)
+3. Download headless Chromium (+ system deps on Linux)
+4. Patch `openclaw.json` with agent entry and Telegram binding
+5. Restart the gateway
 
-Reddit blocks requests from most cloud IP ranges (AWS, GCP, Azure). If you're running on a cloud server, you need an HTTPS proxy with a residential IP.
+## Running on Cloud Servers (AWS, GCP, Hetzner, etc.)
 
-Set the proxy before starting the gateway:
+Reddit blocks requests from most datacenter IP ranges — you'll get `403 Blocked` on any request from an EC2 or similar VPS. A residential HTTPS proxy solves this.
+
+### Setup
+
+1. Get a residential proxy. We tested with [SmartProxy](https://www.smartproxy.com) (~$7/mo for 1GB). Free tier is enough for light use.
+
+2. Install with the `--proxy` flag:
 
 ```bash
-export HTTPS_PROXY="http://user:pass@proxy-host:port"
+./scripts/install.sh \
+  --non-interactive \
+  --telegram-group-id "<GROUP_ID>" \
+  --telegram-topic-id "<TOPIC_ID>" \
+  --proxy "http://user:pass@gate.smartproxy.com:10000"
 ```
 
-Or add it to your OpenClaw environment so it persists across restarts.
+3. Or set the env vars manually if the agent is already installed:
 
-Recommended providers: [Webshare](https://www.webshare.io) (~$5/mo), [SmartProxy](https://www.smartproxy.com) (~$7/mo for 1GB residential).
+```bash
+# Add to ~/.openclaw/reddit-pain-finder.env (or your gateway startup script)
+HTTPS_PROXY=http://user:pass@gate.smartproxy.com:10000
+HTTP_PROXY=http://user:pass@gate.smartproxy.com:10000
+```
+
+Then restart the gateway **with these env vars loaded** — child processes (search.js, batch-scrape.js) inherit them from the gateway.
+
+### Important notes
+
+- **Password encoding:** If your proxy password contains `+`, replace it with `%2B` in the URL. Example: password `+PNd5B` becomes `%2BPNd5B` in the URL.
+- **SmartProxy ports:** Port `10001` may not work with Playwright's CONNECT tunnel. Use port `10000` instead — tested and confirmed working.
+- **Timeout:** Scraping through a proxy is slower. Consider increasing `agents.defaults.timeoutSeconds` in `openclaw.json` to `1800` (30 min) if analyses get killed.
+- **Proxy env must reach the gateway process.** If you start the gateway manually (`nohup openclaw gateway &`), make sure to `source ~/.openclaw/reddit-pain-finder.env` first. The install script writes the env file but can't always inject it into a running gateway.
+
+### Verify proxy works
+
+```bash
+# Quick test from the server
+HTTPS_PROXY="http://user:pass@gate.smartproxy.com:10000" \
+  node ~/.openclaw/workspace/workspace-reddit-pain-finder/tools/reddit-scraper/search.js \
+  --queries "back pain" 2>/dev/null
+```
+
+If you see results — proxy is working. If `total: 0` — check the env vars and proxy port.
 
 ## Usage
 
@@ -97,7 +137,7 @@ workspace-reddit-pain-finder/
   tools/
     telegram-buttons.js # Telegram keyboard interface
     reddit-scraper/
-      lib.js            # Core scraping library
+      lib.js            # Core scraping library (Playwright + optional proxy)
       search.js         # Subreddit discovery
       batch-scrape.js   # Batch scrape + pre-analysis
       scrape.js         # Single-sub scraper (debug)
@@ -123,7 +163,7 @@ After install, you can tune `~/.openclaw/workspace/workspace-reddit-pain-finder/
 }
 ```
 
-No Reddit credentials needed — the agent uses Reddit's public JSON API via Playwright (headless Chromium handles redirects, compression, and rate-limit responses correctly).
+No Reddit credentials needed — the agent uses Reddit's public JSON API via Playwright.
 
 ### Telegram
 
@@ -155,6 +195,7 @@ Then restart OpenClaw.
 
 ## Known Limitations
 
+- **Cloud IP blocking:** Reddit blocks datacenter IPs (AWS, GCP, Hetzner). Use a residential proxy — see [setup guide above](#running-on-cloud-servers-aws-gcp-hetzner-etc).
 - **Stale results after `/reset`:** Gateway may deliver in-flight tool results after a session reset. This is a platform-level issue, not fixable at agent level.
 - **Sparse topics:** Some topics (e.g., "CI flaky tests", "invoice collection") have few dedicated Reddit communities. The agent will report honestly instead of padding with irrelevant mega-communities.
 - **Rate limiting:** Reddit rate-limits aggressive scraping. The agent uses jittered delays and bounded retries, but large analyses may hit 429 errors.
