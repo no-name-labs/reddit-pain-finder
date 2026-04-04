@@ -23,7 +23,7 @@ Built for entrepreneurs and product teams who want to find prospects by locating
 - Telegram group with Topics enabled (agent binds to the existing OpenClaw bot)
 
 No separate Telegram bot token needed — the agent uses the same bot that OpenClaw is already running.
-No Reddit account needed — the agent uses Reddit's public JSON API.
+No Reddit account needed — the agent uses Reddit's public JSON API via headless Chromium (Playwright).
 
 ## Install
 
@@ -123,7 +123,7 @@ After install, you can tune `~/.openclaw/workspace/workspace-reddit-pain-finder/
 }
 ```
 
-No Reddit credentials needed — the agent uses Reddit's public JSON API with standard HTTP requests.
+No Reddit credentials needed — the agent uses Reddit's public JSON API via Playwright (headless Chromium handles redirects, compression, and rate-limit responses correctly).
 
 ### Telegram
 
@@ -158,7 +158,7 @@ Then restart OpenClaw.
 - **Stale results after `/reset`:** Gateway may deliver in-flight tool results after a session reset. This is a platform-level issue, not fixable at agent level.
 - **Sparse topics:** Some topics (e.g., "CI flaky tests", "invoice collection") have few dedicated Reddit communities. The agent will report honestly instead of padding with irrelevant mega-communities.
 - **Rate limiting:** Reddit rate-limits aggressive scraping. The agent uses jittered delays and bounded retries, but large analyses may hit 429 errors.
-- **No authentication:** The agent uses Reddit's public JSON API without login. This means no access to NSFW or private subreddits.
+- **No authentication:** The agent uses Reddit's public JSON API without login. No access to NSFW or private subreddits.
 
 ## License
 

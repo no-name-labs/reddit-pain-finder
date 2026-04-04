@@ -8,6 +8,7 @@
     "scrape": "node scrape.js"
   },
   "dependencies": {
-    "cheerio": "^1.2.0"
+    "cheerio": "^1.2.0",
+    "playwright": "^1.58.2"
   }
 }

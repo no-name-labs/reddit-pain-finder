@@ -95,10 +95,12 @@ mkdir -p "${WORKSPACE_DIR}" "${AGENT_DIR}/sessions"
 cp -R "${ROOT_DIR}/workspace-reddit-pain-finder/"* "${WORKSPACE_DIR}/"
 
 # --- Install Node dependencies ---
-echo "==> Installing Node.js dependencies (cheerio only, no browser needed)..."
+echo "==> Installing Node.js dependencies..."
 cd "${WORKSPACE_DIR}/tools/reddit-scraper"
 if [[ -f "package.json" ]]; then
   npm install --silent 2>/dev/null
+  echo "==> Installing Chromium for Playwright..."
+  npx playwright install chromium --with-deps 2>/dev/null || npx playwright install chromium 2>/dev/null || true
 fi
 cd "${ROOT_DIR}"
 

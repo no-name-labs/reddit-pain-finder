@@ -3,8 +3,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const http = require('http');
-const https = require('https');
+const { chromium } = require('playwright');
 const cheerio = require('cheerio');
 
 // ---------------------------------------------------------------------------
@@ -147,149 +146,71 @@ function loadConfig(configPath) {
 }
 
 // ---------------------------------------------------------------------------
-// (Login removed — Reddit JSON API works without authentication)
+// HTTP layer (Playwright browser context — handles redirects, compression, cookies)
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// HTTP layer (native https — no Playwright needed)
-// ---------------------------------------------------------------------------
-
-// Proxy support: set HTTPS_PROXY or HTTP_PROXY env var.
-// Format: http://user:pass@host:port
-function getProxyConfig() {
-  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
-  if (!proxyUrl) return null;
-  const parsed = new URL(proxyUrl);
-  return {
-    host: parsed.hostname,
-    port: parseInt(parsed.port, 10) || 8080,
-    auth: parsed.username ? `${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password || '')}` : null,
-  };
-}
-
-function httpGet(url, headers, timeoutMs) {
-  const proxy = getProxyConfig();
-  if (proxy) return httpGetViaProxy(url, headers, timeoutMs, proxy);
-  return httpGetDirect(url, headers, timeoutMs);
-}
-
-function httpGetDirect(url, headers, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const req = https.request({
-      hostname: parsed.hostname,
-      path: parsed.pathname + parsed.search,
-      method: 'GET',
-      headers,
-      timeout: timeoutMs,
-    }, (res) => {
-      let body = '';
-      res.on('data', (chunk) => (body += chunk));
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
-    });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error(`Timeout after ${timeoutMs}ms for ${url}`)); });
-    req.end();
-  });
-}
-
-function httpGetViaProxy(url, headers, timeoutMs, proxy) {
-  return new Promise((resolve, reject) => {
-    const target = new URL(url);
-    const connectHeaders = { Host: `${target.hostname}:443` };
-    if (proxy.auth) connectHeaders['Proxy-Authorization'] = 'Basic ' + Buffer.from(proxy.auth).toString('base64');
-
-    const connectReq = http.request({
-      host: proxy.host,
-      port: proxy.port,
-      method: 'CONNECT',
-      path: `${target.hostname}:443`,
-      headers: connectHeaders,
-      timeout: timeoutMs,
-    });
-
-    connectReq.on('connect', (res, socket) => {
-      if (res.statusCode !== 200) {
-        socket.destroy();
-        return reject(new Error(`Proxy CONNECT failed with status ${res.statusCode}`));
-      }
-
-      const tlsReq = https.request({
-        hostname: target.hostname,
-        path: target.pathname + target.search,
-        method: 'GET',
-        headers,
-        socket,
-        agent: false,
-        timeout: timeoutMs,
-      }, (tlsRes) => {
-        let body = '';
-        tlsRes.on('data', (chunk) => (body += chunk));
-        tlsRes.on('end', () => resolve({ status: tlsRes.statusCode, headers: tlsRes.headers, body }));
-      });
-      tlsReq.on('error', reject);
-      tlsReq.on('timeout', () => { tlsReq.destroy(); reject(new Error(`Timeout after ${timeoutMs}ms for ${url} (via proxy)`)); });
-      tlsReq.end();
-    });
-
-    connectReq.on('error', reject);
-    connectReq.on('timeout', () => { connectReq.destroy(); reject(new Error(`Proxy connect timeout for ${url}`)); });
-    connectReq.end();
-  });
-}
 
 async function fetchText(context, url, config, log, referer) {
   log('GET', url);
-  const headers = {
-    'user-agent': config.userAgent,
-    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'accept-language': `${config.locale},en;q=0.9`,
-    'cache-control': 'no-cache',
-    pragma: 'no-cache',
-    ...(referer ? { referer } : {}),
-  };
+  const response = await context.request.get(url, {
+    failOnStatusCode: false,
+    timeout: config.timeoutMs,
+    headers: {
+      'user-agent': config.userAgent,
+      accept:
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'accept-language': `${config.locale},en;q=0.9`,
+      'cache-control': 'no-cache',
+      pragma: 'no-cache',
+      ...(referer ? { referer } : {}),
+    },
+  });
 
-  const res = await httpGet(url, headers, config.timeoutMs);
-  log('Status', res.status, 'bytes', res.body.length);
+  const text = await response.text();
+  log('Status', response.status(), 'bytes', text.length);
 
-  if (res.status < 200 || res.status >= 300) {
-    throw new Error(`Request failed with status ${res.status} for ${url}`);
+  if (!response.ok()) {
+    throw new Error(`Request failed with status ${response.status()} for ${url}`);
   }
 
-  return res.body;
+  return text;
 }
 
 async function fetchJson(context, url, config, log, referer) {
   log('GET (json)', url);
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    const headers = {
-      'user-agent': config.userAgent,
-      accept: 'application/json, text/plain, */*',
-      'accept-language': `${config.locale},en;q=0.9`,
-      'cache-control': 'no-cache',
-      pragma: 'no-cache',
-      ...(referer ? { referer } : {}),
-    };
+    const response = await context.request.get(url, {
+      failOnStatusCode: false,
+      timeout: config.timeoutMs,
+      headers: {
+        'user-agent': config.userAgent,
+        accept: 'application/json, text/plain, */*',
+        'accept-language': `${config.locale},en;q=0.9`,
+        'cache-control': 'no-cache',
+        pragma: 'no-cache',
+        ...(referer ? { referer } : {}),
+      },
+    });
 
-    const res = await httpGet(url, headers, config.timeoutMs);
-    log('Status', res.status, 'attempt', attempt + 1);
+    const status = response.status();
+    log('Status', status, 'attempt', attempt + 1);
 
-    if (res.status === 429) {
-      const retryAfter = parseInt(res.headers['retry-after'] || '15', 10);
+    if (status === 429) {
+      const retryAfter = parseInt(response.headers()['retry-after'] || '15', 10);
       const backoffMs = Math.max(retryAfter * 1000, 5000) + jitteredDelay(2000);
       log('Rate limited (429), backing off', Math.round(backoffMs / 1000), 'seconds');
       await sleep(backoffMs);
       continue;
     }
 
-    log('Bytes', res.body.length);
+    const text = await response.text();
+    log('Bytes', text.length);
 
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(`Request failed with status ${res.status} for ${url}`);
+    if (!response.ok()) {
+      throw new Error(`Request failed with status ${status} for ${url}`);
     }
 
-    return JSON.parse(res.body);
+    return JSON.parse(text);
   }
 
   throw new Error(`Rate limited after 3 retries for ${url}`);
@@ -506,8 +427,12 @@ async function collectRecentPostsAuto(context, target, config, log) {
   // Try JSON API first, fall back to HTML if rate-limited
   try {
     const testUrl = `https://www.reddit.com/r/${target.subreddit}/new.json?limit=1&raw_json=1`;
-    const res = await httpGet(testUrl, { 'user-agent': config.userAgent }, 15000);
-    if (res.status === 429) {
+    const testResp = await context.request.get(testUrl, {
+      failOnStatusCode: false,
+      timeout: 15000,
+      headers: { 'user-agent': config.userAgent },
+    });
+    if (testResp.status() === 429) {
       log('JSON API rate-limited (429), falling back to HTML endpoints');
       return collectRecentPosts(context, target, config, log);
     }
@@ -526,8 +451,12 @@ async function collectCommentsAuto(context, posts, config, log) {
 
   try {
     const testUrl = `https://www.reddit.com/r/${firstPost.subreddit}/comments/${firstPost.shortId}.json?limit=1&raw_json=1`;
-    const res = await httpGet(testUrl, { 'user-agent': config.userAgent }, 15000);
-    if (res.status === 429) {
+    const testResp = await context.request.get(testUrl, {
+      failOnStatusCode: false,
+      timeout: 15000,
+      headers: { 'user-agent': config.userAgent },
+    });
+    if (testResp.status() === 429) {
       log('JSON API rate-limited for comments, falling back to HTML');
       const count = await collectComments(context, posts, config, log);
       let totalActual = 0;
@@ -709,18 +638,48 @@ async function collectComments(context, posts, config, log) {
 }
 
 // ---------------------------------------------------------------------------
-// Session management (lightweight — no browser needed)
+// Session management (Playwright browser with optional proxy)
 // ---------------------------------------------------------------------------
+
+function getProxyOptions() {
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
+  if (!proxyUrl) return undefined;
+  try {
+    const parsed = new URL(proxyUrl);
+    const opts = { server: `${parsed.protocol}//${parsed.hostname}:${parsed.port || 8080}` };
+    if (parsed.username) {
+      opts.username = decodeURIComponent(parsed.username);
+      opts.password = decodeURIComponent(parsed.password || '');
+    }
+    return opts;
+  } catch {
+    return undefined;
+  }
+}
 
 async function createSession(configPath) {
   const config = loadConfig(configPath);
   const log = createLogger(config.verbose);
-  // No browser, no login — Reddit JSON API is public
-  return { context: null, config, log };
+
+  const proxyOpts = getProxyOptions();
+  if (proxyOpts) log('Using proxy:', proxyOpts.server);
+
+  const launchOptions = { headless: true };
+  if (proxyOpts) launchOptions.proxy = proxyOpts;
+
+  const browser = await chromium.launch(launchOptions);
+  const context = await browser.newContext({
+    locale: config.locale,
+    userAgent: config.userAgent,
+  });
+
+  return { context, browser, config, log };
 }
 
 async function closeSession(session) {
-  // Nothing to close — no browser
+  if (!session) return;
+  await session.context.close().catch(() => {});
+  await session.browser.close().catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
