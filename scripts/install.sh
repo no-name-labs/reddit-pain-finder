@@ -100,7 +100,13 @@ cd "${WORKSPACE_DIR}/tools/reddit-scraper"
 if [[ -f "package.json" ]]; then
   npm install --silent 2>/dev/null
   echo "==> Installing Chromium for Playwright..."
-  npx playwright install chromium --with-deps 2>/dev/null || npx playwright install chromium 2>/dev/null || true
+  if [[ "$(uname)" == "Linux" ]]; then
+    # On Linux, --with-deps installs system libraries (needs sudo)
+    npx playwright install chromium --with-deps 2>/dev/null || npx playwright install chromium 2>/dev/null || true
+  else
+    # On macOS, Chromium is self-contained — no system deps needed
+    npx playwright install chromium 2>/dev/null || true
+  fi
 fi
 cd "${ROOT_DIR}"
 
