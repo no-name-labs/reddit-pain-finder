@@ -85,6 +85,16 @@ if [[ -z "${TELEGRAM_GROUP_ID}" || -z "${TELEGRAM_TOPIC_ID}" ]]; then
   exit 1
 fi
 
+# --- Proxy prompt (interactive only) ---
+if [[ "${NON_INTERACTIVE}" == "0" && -z "${PROXY_URL}" ]]; then
+  echo ""
+  echo "    Reddit blocks requests from cloud servers (AWS, GCP, Hetzner)."
+  echo "    If you're installing on a VPS, you'll need a residential HTTPS proxy."
+  echo "    On a local machine (Mac/desktop) you can skip this."
+  echo ""
+  read -r -p "HTTPS proxy URL (leave blank to skip): " PROXY_URL
+fi
+
 # --- Copy workspace ---
 WORKSPACE_DIR="${OPENCLAW_HOME}/workspace/workspace-reddit-pain-finder"
 AGENT_DIR="${OPENCLAW_HOME}/agents/reddit-pain-finder"
